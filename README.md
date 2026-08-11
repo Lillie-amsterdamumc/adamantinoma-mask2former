@@ -1,5 +1,21 @@
 # Mask2Former: Masked-attention Mask Transformer for Universal Image Segmentation (CVPR 2022)
 
+> **Adamantinoma segmentation project**
+>
+> This repository is a customized version of Mask2Former developed for semantic segmentation of adamantinoma histopathology images.
+>
+> The project has been tested on an NVIDIA H100 NVL GPU using:
+>
+> - Python 3.11.15
+> - PyTorch 2.1.0 + CUDA 12.1
+> - TorchVision 0.16.0 + CUDA 12.1
+> - Detectron2 0.6
+> - MultiScaleDeformableAttention 1.0
+> - OpenSlide 1.4.3
+> - FastSlide 0.5.2
+> - WSI-patching 0.5.1
+>
+> See [INSTALL.md](INSTALL.md) for the project-specific installation instructions.
 [Bowen Cheng](https://bowenc0221.github.io/), [Ishan Misra](https://imisra.github.io/), [Alexander G. Schwing](https://alexander-schwing.de/), [Alexander Kirillov](https://alexander-kirillov.github.io/), [Rohit Girdhar](https://rohitgirdhar.github.io/)
 
 [[`arXiv`](https://arxiv.org/abs/2112.01527)] [[`Project`](https://bowenc0221.github.io/mask2former)] [[`BibTeX`](#CitingMask2Former)]
