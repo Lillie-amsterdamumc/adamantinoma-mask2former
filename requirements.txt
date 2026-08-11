@@ -1,7 +1,24 @@
-cython
-scipy
-shapely
-timm
-h5py
-submitit
-scikit-image
+# Runtime
+numpy==1.26.4
+scipy==1.17.1
+opencv-python==4.13.0.92
+h5py==3.16.0
+shapely==2.1.2
+rasterio==1.4.4
+rtree==1.4.1
+
+# WSI
+fastslide==0.5.2
+wsi-patching==0.5.1
+openslide-python==1.4.3
+openslide-bin==4.0.0.13
+
+# Deep learning
+torch==2.1.0+cu121
+torchvision==0.16.0+cu121
+torchaudio==2.1.0+cu121
+timm==1.0.26
+
+# Mask2Former / Detectron2
+MultiScaleDeformableAttention==1.0
+detectron2 @ git+https://github.com/facebookresearch/detectron2.git@b599f139756bd3646a26a909caf86a1a159e53a7

@@ -147,6 +147,7 @@ class HungarianMatcher(nn.Module):
                 + self.cost_dice * cost_dice
             )
             C = C.reshape(num_queries, -1).cpu()
+            C = torch.nan_to_num(C, nan=1e6, posinf=1e6, neginf=-1e6)
 
             indices.append(linear_sum_assignment(C))
 
