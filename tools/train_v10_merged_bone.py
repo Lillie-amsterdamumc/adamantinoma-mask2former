@@ -39,16 +39,16 @@ single clean comparison: 3-class vs 2-class):
     other setting changing at the same time.
 
 What changed vs the previous v10 draft:
-  - Added a one-time, safe on-disk mask normalization step
+  - Added an optional one-time on-disk mask normalization step
     (normalize_mask_channels_on_disk) that converts any 3-channel mask
     PNGs under TRAIN_ROOT/masks and VAL_ROOT/masks to single-channel,
     after taking a one-time backup of each masks/ folder. This runs
-    automatically at the start of main() when NORMALIZE_MASKS_ON_DISK is
-    True. _read_mask() already defends against 3-channel masks at read
+    at the start of main() only when explicitly requested with
+    --normalize-masks-on-disk. _read_mask() already defends against
+    3-channel masks at read
     time, so this step is a belt-and-suspenders cleanup, not a
     correctness requirement -- but it makes every future read faster and
-    removes the ambiguity for good. Set NORMALIZE_MASKS_ON_DISK = False
-    once you've confirmed the masks/ folders are already single-channel.
+    removes the ambiguity for good.
 
 Location in this repository
 ----------------------------
@@ -127,10 +127,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from mask2former import add_maskformer2_config
-from mask2former.data.dataset_mappers.mask_former_semantic_dataset_mapper import (
-    MaskFormerSemanticDatasetMapper,
-)
-
 # =============================================================================
 # Paths and experiment settings
 #
@@ -168,7 +164,9 @@ MERGE_BONE_CLASSES = True
 # One-time on-disk mask normalization (3-channel -> single-channel)
 # =============================================================================
 
-NORMALIZE_MASKS_ON_DISK = True  # set False after you've run it once successfully
+# Keep source annotations immutable during normal training. Enable the optional
+# cleanup explicitly with --normalize-masks-on-disk if it is ever needed.
+NORMALIZE_MASKS_ON_DISK = False
 MASK_BACKUP_SUFFIX = "_backup"
 
 
@@ -489,22 +487,23 @@ def compute_patch_repeat_factors(
 # =============================================================================
 
 class AugmentedMaskFormerSemanticMapper:
-    def __init__(self, cfg):
-        min_sizes = cfg.INPUT.MIN_SIZE_TRAIN
+    def __init__(self, cfg, *, is_train: bool = True):
+        self.is_train = is_train
+        min_sizes = cfg.INPUT.MIN_SIZE_TRAIN if is_train else cfg.INPUT.MIN_SIZE_TEST
         if not isinstance(min_sizes, (tuple, list)):
             min_sizes = (min_sizes,)
 
         aug_steps = [
             T.ResizeShortestEdge(
                 short_edge_length=list(min_sizes),
-                max_size=cfg.INPUT.MAX_SIZE_TRAIN,
-                sample_style=cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING,
+                max_size=(cfg.INPUT.MAX_SIZE_TRAIN if is_train else cfg.INPUT.MAX_SIZE_TEST),
+                sample_style=(cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING if is_train else "choice"),
             ),
         ]
-        if ENABLE_GEOMETRIC_AUGMENTATION:
+        if is_train and ENABLE_GEOMETRIC_AUGMENTATION:
             aug_steps.append(T.RandomFlip(prob=HORIZONTAL_FLIP_PROB, horizontal=True, vertical=False))
             aug_steps.append(T.RandomFlip(prob=VERTICAL_FLIP_PROB, horizontal=False, vertical=True))
-        if ENABLE_PHOTOMETRIC_AUGMENTATION:
+        if is_train and ENABLE_PHOTOMETRIC_AUGMENTATION:
             aug_steps.append(T.RandomBrightness(*BRIGHTNESS_RANGE))
             aug_steps.append(T.RandomContrast(*CONTRAST_RANGE))
         self.augmentations = T.AugmentationList(aug_steps)
@@ -523,6 +522,11 @@ class AugmentedMaskFormerSemanticMapper:
         sem_seg = np.ascontiguousarray(np.rot90(sem_seg, k=k, axes=(0, 1)))
         return image, sem_seg
 
+    def _apply_optional_rotation(self, image: np.ndarray, sem_seg: np.ndarray):
+        if not self.is_train:
+            return image, sem_seg
+        return self._maybe_rotate_90(image, sem_seg)
+
     def __call__(self, dataset_dict: Dict) -> Dict:
         dataset_dict = dataset_dict.copy()
         image = utils.read_image(dataset_dict["file_name"], format="BGR")
@@ -534,7 +538,7 @@ class AugmentedMaskFormerSemanticMapper:
         image = aug_input.image
         sem_seg = aug_input.sem_seg.astype("int64")
 
-        image, sem_seg = self._maybe_rotate_90(image, sem_seg)
+        image, sem_seg = self._apply_optional_rotation(image, sem_seg)
 
         image_shape = image.shape[:2]
         dataset_dict["image"] = torch.as_tensor(
@@ -666,21 +670,11 @@ def build_val_loss_loader(cfg, mapper, dataset_name: str, batch_size: int):
 
 
 def build_deterministic_val_mapper(cfg):
-    val_cfg = cfg.clone()
-    val_cfg.defrost()
-    val_cfg.INPUT.RANDOM_FLIP = "none"
-    val_cfg.INPUT.CROP.ENABLED = False
-
-    min_size_test = cfg.INPUT.MIN_SIZE_TEST
-    if isinstance(min_size_test, (tuple, list)):
-        test_size = min_size_test[0]
-    else:
-        test_size = min_size_test
-    val_cfg.INPUT.MIN_SIZE_TRAIN = (int(test_size),)
-    val_cfg.INPUT.MIN_SIZE_TRAIN_SAMPLING = "choice"
-    val_cfg.INPUT.MAX_SIZE_TRAIN = int(cfg.INPUT.MAX_SIZE_TEST)
-    val_cfg.freeze()
-    return MaskFormerSemanticDatasetMapper(val_cfg, is_train=True)
+    # Use the project mapper for validation too. Unlike Mask2Former's stock
+    # mapper, it reads masks through _read_mask(), so raw label 2 is merged to
+    # label 1 before the two-class criterion sees it. is_train=False keeps the
+    # resize deterministic and disables flips, rotations and colour transforms.
+    return AugmentedMaskFormerSemanticMapper(cfg, is_train=False)
 
 
 class ValidationLossHook(HookBase):
@@ -1180,11 +1174,11 @@ def parse_args() -> argparse.Namespace:
         "--normalize-masks-on-disk",
         dest="normalize_masks",
         action="store_true",
-        default=True,
+        default=False,
         help=(
             "Convert any 3-channel mask PNGs under train/val masks/ to "
-            "single-channel in place (with a one-time backup). Enabled by "
-            "default; safe to re-run. See normalize_mask_channels_on_disk()."
+            "single-channel in place (with a one-time backup). Disabled by "
+            "default because normal training must not modify source masks."
         ),
     )
     normalize_group.add_argument(
